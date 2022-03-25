@@ -176,3 +176,81 @@ rb_observer = reverb_utils.ReverbAddTrajectoryObserver(
   replay_buffer.py_client,
   table_name,
   sequence_length=2)
+
+agent.collect_data_spec
+agent.collect_data_spec._fields
+
+#running the replay buffer on train env using random policy in order to collect data
+py_driver.PyDriver(
+    env,
+    py_tf_eager_policy.PyTFEagerPolicy(
+      random_policy, use_tf_function=True),
+    [rb_observer],
+    max_steps=initial_collect_steps).run(train_py_env.reset())
+
+iter(replay_buffer.as_dataset()).next()
+
+#giving the agent access to the replay buffer
+'''Each row of the replay buffer only stores a single observation step. But since the DQN Agent needs both the current and next observation to compute the loss, 
+the dataset pipeline will sample two adjacent rows for each item in the batch (num_steps=2).
+This dataset is also optimized by running parallel calls and prefetching data'''
+# Dataset generates trajectories with shape [Bx2x...]
+dataset = replay_buffer.as_dataset(
+    num_parallel_calls=3,
+    sample_batch_size=batch_size,
+    num_steps=2).prefetch(3)
+
+dataset
+
+iterator = iter(dataset)
+print(iterator)
+#iterator.next()
+
+#training:
+'''The training involves collecting data from the environment and using this data to train the agent's neural network'''
+# (Optional) Optimize by wrapping some of the code in a graph using TF function.
+agent.train = common.function(agent.train)
+
+# Reset the train step.
+agent.train_step_counter.assign(0)
+
+# Evaluate the agent's policy once before training.
+avg_return = compute_avg_return(eval_env, agent.policy, num_eval_episodes)
+returns = [avg_return]
+
+# Reset the environment.
+time_step = train_py_env.reset()
+
+# Create a driver to collect experience.
+collect_driver = py_driver.PyDriver(
+    env,
+    py_tf_eager_policy.PyTFEagerPolicy(
+      agent.collect_policy, use_tf_function=True),
+    [rb_observer],
+    max_steps=collect_steps_per_iteration)
+
+for _ in range(num_iterations):
+
+  # Collect a few steps and save to the replay buffer.
+  time_step, _ = collect_driver.run(time_step)
+
+  # Sample a batch of data from the buffer and update the agent's network.
+  experience, unused_info = next(iterator)
+  train_loss = agent.train(experience).loss
+
+  step = agent.train_step_counter.numpy()
+
+  if step % log_interval == 0:
+    print('step = {0}: loss = {1}'.format(step, train_loss))
+
+  if step % eval_interval == 0:
+    avg_return = compute_avg_return(eval_env, agent.policy, num_eval_episodes)
+    print('step = {0}: Average Return = {1}'.format(step, avg_return))
+    returns.append(avg_return)
+
+#if you want to show results on graph
+iterations = range(0, num_iterations + 1, eval_interval)
+plt.plot(iterations, returns)
+plt.ylabel('Average Return')
+plt.xlabel('Iterations')
+plt.ylim(top=250)
