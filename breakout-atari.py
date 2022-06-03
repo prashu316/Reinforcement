@@ -73,7 +73,7 @@ log_interval = 1000
 num_eval_episodes = 5
 eval_interval = 25000
 
-env_name = 'Breakout-v4
+env_name = 'Breakout-v4'
 
 
 # AtariPreprocessing runs 4 frames at a time, max-pooling over the last 2
